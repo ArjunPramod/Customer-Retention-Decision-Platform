@@ -1,0 +1,301 @@
+System design document
+
+# End-to-End Telecom Churn Prediction & Cost-Aware Retention Decision System
+This project implements a production-style end-to-end machine learning decision system designed to predict customer churn, segment customers into behavioral groups, and recommend retention actions. 
+The goal is not only to identify customers at risk of churn, but also to translate predictions into actionable business decisions. The system combines deterministic data preprocessing, unsupervised customer segmentation, supervised churn prediction, and a cost-aware rule-based retention engine, exposed through a FastAPI backend with a Streamlit frontend.
+The workflow begins with exploratory data analysis to understand feature distributions, churn imbalance, and data quality issues. During this stage, schema inconsistencies are identified, including TotalCharges being stored as text and edge cases where customers have zero tenure. This analysis is diagnostic and informs downstream preprocessing decisions but does not generate production artifacts.
+Next, deterministic preprocessing is applied to normalize the dataset. The SeniorCitizen column is converted from numeric values to categorical labels for consistency, TotalCharges is coerced to numeric, and customers with zero tenure are assigned zero total charges to preserve business logic. The non-predictive customerID column is removed. These steps ensure semantic correctness and schema stability before any machine learning is performed. The deterministically cleaned dataset is saved and used as the foundation for both customer segmentation and churn prediction.
+
+At this stage, a canonical feature schema is established and treated as a contract for all downstream components. The churn target is defined as Churn. Numerical features consist of tenure, MonthlyCharges, and TotalCharges, while categorical features include gender, SeniorCitizen, Partner, Dependents, PhoneService, MultipleLines, InternetService, OnlineSecurity, OnlineBackup, DeviceProtection, TechSupport, StreamingTV, StreamingMovies, Contract, PaperlessBilling, and PaymentMethod. 
+This compact schema definition mirrors the deterministic preprocessing pipeline and is assumed consistently by clustering, churn modeling, FastAPI input validation, and Streamlit UI generation, ensuring stable feature alignment and preventing silent training–serving drift.
+
+Customer segmentation is then performed as an unsupervised learning task to identify natural customer groups based on service usage and behavioral features. Both KMeans and K-Prototypes clustering algorithms are evaluated, acknowledging that the dataset contains mixed numeric and categorical variables. Each approach is validated through cluster profiling and churn separation, and the better-performing model is selected for deployment. The resulting cluster model assigns each customer to a segment that represents a customer persona, which is later used for business interpretation and retention strategy design.
+In parallel, a supervised churn prediction model is trained independently using a scikit-learn Pipeline composed of a ColumnTransformer for preprocessing and a Gradient Boosting classifier. The pipeline handles categorical encoding and numeric feature scaling internally, preventing training–serving skew. Model selection and threshold tuning are guided by PR-AUC due to class imbalance. Importantly, customer cluster IDs are not used as features in the churn model, keeping segmentation and prediction decoupled to avoid dependency coupling and semantic drift. The churn model outputs a probability of churn rather than just a binary label.
+To improve decision reliability, predicted churn probabilities are calibrated post-training so they better reflect true observed churn rates. This is critical because downstream retention actions are driven by expected economic loss rather than raw model scores. Model explainability is incorporated through feature attribution, enabling both global insight into churn drivers and per-customer explanations at inference time. These explanations support transparent retention decisions, stakeholder trust, and future model refinement.
+After training, two independent production artifacts are produced: a clustering model for customer segmentation and a churn prediction pipeline for risk estimation. These models are loaded by a FastAPI backend that serves as the online inference layer. The system supports real-time single-customer predictions. For each inference request, FastAPI validates inputs using Pydantic schemas, applies the churn model to generate a churn probability, applies the clustering model to assign a customer segment, and then passes both outputs to a retention decision engine.
+Retention recommendations are generated using a cost-aware rule-based engine. Instead of static thresholds alone, the system estimates expected customer loss by combining churn probability with an assumed customer lifetime value. Retention actions are triggered only when expected loss exceeds the estimated cost of intervention. Customer segments and selected attributes are then used to determine appropriate actions such as discounts, contract upgrades, or service bundles. This approach keeps retention logic interpretable, economically rational, and decoupled from model retraining.
+
+A Streamlit interface serves as the presentation layer, allowing users to input customer details through dropdowns and numeric fields. Streamlit session state is used to manage UI persistence and prediction results, while all inference logic remains isolated in the FastAPI backend. The system is designed for deployment on Hugging Face Spaces or Streamlit-compatible hosting platforms, providing an accessible demonstration of real-time ML inference.
+Overall, this project simulates a realistic production ML architecture by combining deterministic preprocessing, unsupervised segmentation, supervised churn prediction, calibrated probabilities, explainable inference, cost-aware business logic, API deployment, UI integration. The system is designed with modularity, interpretability, and maintainability in mind, reflecting real-world ML engineering practices and providing a complete example of how machine learning models can be integrated into an end-to-end decision platform.
+
+Customer value is approximated using a segment-aware lifetime value proxy derived from MonthlyCharges. Since the dataset does not include true profit or lifetime value, expected future revenue is estimated by multiplying MonthlyCharges by an assumed remaining tenure that varies by customer segment. This allows customer value to scale with actual revenue while incorporating behavioral differences captured through unsupervised segmentation. By keeping CLV estimation independent of the churn model, the system avoids coupling business assumptions with predictive learning.
+Retention cost is determined using a hybrid policy that combines revenue-based heuristics with segment-level prioritization. A baseline retention budget is first computed as a multiple of MonthlyCharges, representing how many months of revenue the business is willing to invest in saving a customer. This baseline is then adjusted using segment-specific multipliers to reflect strategic priorities, allowing higher-value or more loyal segments to receive more aggressive interventions while keeping spending conservative for lower-value groups. This approach ensures retention costs remain proportional, interpretable, and driven by business policy rather than arbitrary constants or model outputs.
+Final retention decisions are made by comparing expected churn loss against the estimated intervention cost. Expected loss is calculated as the calibrated churn probability multiplied by the segment-based customer value proxy. Retention actions are triggered only when this expected loss exceeds the corresponding retention cost. This replaces static probability thresholds with economically grounded decision logic, aligning model predictions directly with financial impact and enabling consistent, value-driven retention strategies across customer segments.
+
+--------------------------------------
+i am building End-to-End Telecom Churn Prediction & Cost-Aware Retention Decision System,
+i plan to build 01_eda.ipynb, 02_deterministic_preprocessing.ipynb, 03_clustering_pipeline.ipynb, 04_churn_pipeline.ipynb, retention_engine.py, fast api, streamlit
+70 / 15 / 15 (stratified split) for churn risk prediction
+feature ablation
+
+RAW_DATA_PATH = "data/raw/telco_customer_churn.csv"
+
+PROCESSED_DATA_PATH = "data/processed/telco_customer_churn_clean.csv"
+
+FEATURES_DATA_PATH = "data/features/telco_customer_churn_features.csv"
+
+Logistic Regression, Random Forest, Gradient Boosting, XGBoost, LightGBM
+ROC-AUC, PR-AUC, Recall, Precision, F1-score
+--------------------------------------------------
+Churn Prediction Pipeline (Supervised Learning)
+{
+    [Churn Probability, Risk Band (derived)] feeds Risk Stratification, 
+    Using SHAP (Top drivers of churn per customer) Feeds Decision Explainability Layer
+}
+Segmentation Clustering Pipeline (Unsupervised Learning)
+{
+    Segmentation feeds Customer Segment,
+    Cluster Profile feeds Action Policy Module
+    cluster_stats = {
+        cluster_id:
+        median_tenure
+        median_monthly_charges
+        expected_remaining_months
+    }
+}
+Business Intelligence Layer (mapping)
+{
+    Customer Value Estimator (CLV Proxy)
+    {
+        Expected_CLV = MonthlyCharges * Expected_Remaining_Months * Survival_Adjustment
+        Remaining_Tenure(customer) = cluster_stats[customer_cluster]
+        Survival_Adjustment = (1 - churn_probability)
+    },
+    Retention Cost Estimator,
+    Cost-Aware Retention Logic
+    Expected_Loss = churn_prob * CLV
+    Retention_Value = Expected_Loss - Retention_Cost,
+    Action Policy Module,
+    Risk Stratification,
+    Decision Explainability Uses SHAP values and top churn drivers
+    Business Policy Configuration
+    Recommended Action 
+}
+
+---------------------------------------------
+
+FastAPI Backend (Inference Layer)
+Streamlit Frontend (Presentation Layer)
+--------------------------------------
+Customer Value = MonthlyCharges × RemainingTenure(segment)
+
+Baseline = MonthlyCharges × K
+Where K = number of months business is willing to invest (e.g. 3).
+
+RetentionCost = Baseline × SegmentMultiplier
+Segment	Multiplier
+Loyal	1.3
+Medium	1.0
+Risky	0.7
+
+ExpectedLoss = ChurnProbability × CustomerValue
+If ExpectedLoss > RetentionCost:
+    intervene
+Else:
+    do nothing
+
+-----------------------------------------------------------
+Feature Normalization
+-----------------------
+df["MultipleLines"] = df["MultipleLines"].replace("No phone service", "No")
+
+internet_features = [
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies"
+]
+
+for col in internet_features:
+    df[col] = df[col].replace("No internet service", "No")
+
+feature engineering
+-----------------------
+df["AddonCount"] = (
+    df[internet_features]
+    .replace({"Yes": 1, "No": 0})
+    .sum(axis=1)
+)
+
+def create_tenure_group(tenure):
+    if tenure <= 12:
+        return "New"
+    elif tenure <= 24:
+        return "Early"
+    elif tenure <= 48:
+        return "Established"
+    else:
+        return "Loyal"
+
+df["tenure_group"] = df["tenure"].apply(create_tenure_group)
+
+df["AutoPay"] = df["PaymentMethod"].isin([
+    "Bank transfer (automatic)",
+    "Credit card (automatic)"
+]).astype(int)
+
+
+--------------------------------------
+Naming conventions
+----------------------------------
+NN_<stage>_<description>.ipynb
+
+notebooks/
+│
+├── 01_eda.ipynb
+├── 02_canonicalization.ipynb
+├── 03_clustering_pipeline.ipynb
+├── 04_churn_pipeline.ipynb
+
+src/
+│
+├── preprocessing.py
+├── retention_engine.py
+├── schemas.py
+├── config.py
+├── model_loader.py
+├── inference.py
+└── utils.py
+
+project/
+│
+├── api/
+│   └── main.py
+│
+├── frontend/
+│   └── streamlit_app.py
+│
+├── src/
+│   ├── preprocessing.py
+│   ├── retention_engine.py
+│   ├── schemas.py
+│   ├── config.py
+│   └── utils.py
+│
+└── notebooks/
+
+
+<purpose>_<type>.joblib
+churn_pipeline
+cluster_pipeline
+
+data/raw/telecom_churn_raw.csv
+data/processed/telecom_churn_clean.csv
+----------------------------------
+
+Request Schema
+
+Field	Type	Notes
+gender	string	Male / Female
+SeniorCitizen	string	Yes / No
+Partner	string	Yes / No
+Dependents	string	Yes / No
+PhoneService	string	Yes / No
+MultipleLines	string	Yes / No / No phone service
+InternetService	string	DSL / Fiber optic / No
+OnlineSecurity	string	Yes / No / No internet service
+OnlineBackup	string	Yes / No / No internet service
+DeviceProtection	string	Yes / No / No internet service
+TechSupport	string	Yes / No / No internet service
+StreamingTV	string	Yes / No / No internet service
+StreamingMovies	string	Yes / No / No internet service
+tenure	integer	
+Contract	string	Month-to-month / One year / Two year
+PaperlessBilling	string	Yes / No
+PaymentMethod	string	Electronic check / Mailed check / Bank transfer (automatic) / Credit card (automatic)
+MonthlyCharges	float	
+TotalCharges	float
+
+Response Schema
+
+Response Schema (JSON)
+Field	Type	Meaning
+churn_probability	float	ML output
+churn_prediction 
+risk_level	string	Low / Medium / High
+segment	string	Customer segment
+expected_loss	float	Revenue risk
+retention_cost	float	Cost to retain
+decision	string	Retain / Do nothing
+retention_action	string	Recommended action
+explanation	string	LLM / rules explanation
+
+Improved Response Schema
+
+Field	Type	Purpose
+prediction_id	UUID	Traceability
+timestamp	ISO datetime	Audit
+churn_probability	float
+churn_prediction	boolean
+risk_level	enum(low, medium, high)
+segment_id	int
+segment_label	string
+customer_value	float
+expected_loss	float
+retention_cost	float
+decision	enum(retain, no_action)
+retention_action	string
+top_risk_drivers	list[{feature, impact}]
+explanation	string
+
+Optional
+Field	Type
+model_version	string
+cluster_model_version	string
+data_drift_score	float (future)
+
+FastAPI Endpoints
+
+POST /predict
+POST /batch_predict
+
+what streamlit needs to display from Response
+
+Risk Summary
+Field	Why
+churn_probability	Core ML signal
+risk_level	Human-readable classification
+
+Customer Segment (Business Context)
+Field
+segment_label
+
+Economic Impact (Decision Driver)
+Field
+expected_loss
+retention_cost
+customer_value
+
+Retention Decision (Actionable Output)
+Field
+decision
+retention_action
+
+Explanation (Trust Layer)
+
+Field
+explanation
+Top 3 risk drivers
+
+---------------------------------------------
+
+currently what we decided
+
+data/raw/telco_customer_churn.csv
+data/processed/telco_customer_churn_canonical.csv
+data/features/telco_customer_churn_features.csv
+
+notebooks/
+01_eda 
+02_churn_pipeline.ipynb
+03_segmentation_pipeline.ipynb
+04_retention_decision.ipynb
+
+src/
+preprocessing.py
+feature_engineering.py
+churn_pipeline.py
+segmentation_pipeline.py
+retention_engine.py
