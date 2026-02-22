@@ -23,25 +23,11 @@ Retention cost is determined using a hybrid policy that combines revenue-based h
 Final retention decisions are made by comparing expected churn loss against the estimated intervention cost. Expected loss is calculated as the calibrated churn probability multiplied by the segment-based customer value proxy. Retention actions are triggered only when this expected loss exceeds the corresponding retention cost. This replaces static probability thresholds with economically grounded decision logic, aligning model predictions directly with financial impact and enabling consistent, value-driven retention strategies across customer segments.
 
 --------------------------------------
-i am building End-to-End Telecom Churn Prediction & Cost-Aware Retention Decision System,
-i plan to build 01_eda.ipynb, 02_deterministic_preprocessing.ipynb, 03_clustering_pipeline.ipynb, 04_churn_pipeline.ipynb, retention_engine.py, fast api, streamlit
-70 / 15 / 15 (stratified split) for churn risk prediction
+End-to-End Telecom Churn Prediction & Cost-Aware Retention Decision System,
+
 feature ablation
-
-RAW_DATA_PATH = "data/raw/telco_customer_churn.csv"
-
-PROCESSED_DATA_PATH = "data/processed/telco_customer_churn_clean.csv"
-
-FEATURES_DATA_PATH = "data/features/telco_customer_churn_features.csv"
-
-Logistic Regression, Random Forest, Gradient Boosting, XGBoost, LightGBM
-ROC-AUC, PR-AUC, Recall, Precision, F1-score
 --------------------------------------------------
-Churn Prediction Pipeline (Supervised Learning)
-{
-    [Churn Probability, Risk Band (derived)] feeds Risk Stratification, 
-    Using SHAP (Top drivers of churn per customer) Feeds Decision Explainability Layer
-}
+
 Segmentation Clustering Pipeline (Unsupervised Learning)
 {
     Segmentation feeds Customer Segment,
@@ -72,10 +58,6 @@ Business Intelligence Layer (mapping)
     Recommended Action 
 }
 
----------------------------------------------
-
-FastAPI Backend (Inference Layer)
-Streamlit Frontend (Presentation Layer)
 --------------------------------------
 Customer Value = MonthlyCharges × RemainingTenure(segment)
 
@@ -95,21 +77,6 @@ Else:
     do nothing
 
 -----------------------------------------------------------
-Feature Normalization
------------------------
-df["MultipleLines"] = df["MultipleLines"].replace("No phone service", "No")
-
-internet_features = [
-    "OnlineSecurity",
-    "OnlineBackup",
-    "DeviceProtection",
-    "TechSupport",
-    "StreamingTV",
-    "StreamingMovies"
-]
-
-for col in internet_features:
-    df[col] = df[col].replace("No internet service", "No")
 
 feature engineering
 -----------------------
@@ -137,165 +104,38 @@ df["AutoPay"] = df["PaymentMethod"].isin([
 ]).astype(int)
 
 
---------------------------------------
-Naming conventions
-----------------------------------
-NN_<stage>_<description>.ipynb
+---------------------------------------------------
 
-notebooks/
-│
-├── 01_eda.ipynb
-├── 02_canonicalization.ipynb
-├── 03_clustering_pipeline.ipynb
-├── 04_churn_pipeline.ipynb
+Streamlit
 
-src/
-│
-├── preprocessing.py
-├── retention_engine.py
-├── schemas.py
-├── config.py
-├── model_loader.py
-├── inference.py
-└── utils.py
+collects form input
+sends JSON to FastAPI /predict
+receives response
+renders results + SHAP plot
 
-project/
-│
-├── api/
-│   └── main.py
-│
-├── frontend/
-│   └── streamlit_app.py
-│
-├── src/
-│   ├── preprocessing.py
-│   ├── retention_engine.py
-│   ├── schemas.py
-│   ├── config.py
-│   └── utils.py
-│
-└── notebooks/
+FastAPI
 
+validates schema (Pydantic)
+calls:
+predict_single_customer()
+plot_shap()
 
-<purpose>_<type>.joblib
-churn_pipeline
-cluster_pipeline
+Retention Engine
 
-data/raw/telecom_churn_raw.csv
-data/processed/telecom_churn_clean.csv
-----------------------------------
+churn inference
+segmentation
+SHAP
+action logic
 
-Request Schema
+PostgreSQL (Supabase)
 
-Field	Type	Notes
-gender	string	Male / Female
-SeniorCitizen	string	Yes / No
-Partner	string	Yes / No
-Dependents	string	Yes / No
-PhoneService	string	Yes / No
-MultipleLines	string	Yes / No / No phone service
-InternetService	string	DSL / Fiber optic / No
-OnlineSecurity	string	Yes / No / No internet service
-OnlineBackup	string	Yes / No / No internet service
-DeviceProtection	string	Yes / No / No internet service
-TechSupport	string	Yes / No / No internet service
-StreamingTV	string	Yes / No / No internet service
-StreamingMovies	string	Yes / No / No internet service
-tenure	integer	
-Contract	string	Month-to-month / One year / Two year
-PaperlessBilling	string	Yes / No
-PaymentMethod	string	Electronic check / Mailed check / Bank transfer (automatic) / Credit card (automatic)
-MonthlyCharges	float	
-TotalCharges	float
+predictions table
 
-Response Schema
-
-Response Schema (JSON)
-Field	Type	Meaning
-churn_probability	float	ML output
-churn_prediction 
-risk_level	string	Low / Medium / High
-segment	string	Customer segment
-expected_loss	float	Revenue risk
-retention_cost	float	Cost to retain
-decision	string	Retain / Do nothing
-retention_action	string	Recommended action
-explanation	string	LLM / rules explanation
-
-Improved Response Schema
-
-Field	Type	Purpose
-prediction_id	UUID	Traceability
-timestamp	ISO datetime	Audit
-churn_probability	float
-churn_prediction	boolean
-risk_level	enum(low, medium, high)
-segment_id	int
-segment_label	string
-customer_value	float
-expected_loss	float
-retention_cost	float
-decision	enum(retain, no_action)
-retention_action	string
-top_risk_drivers	list[{feature, impact}]
-explanation	string
-
-Optional
-Field	Type
-model_version	string
-cluster_model_version	string
-data_drift_score	float (future)
-
-FastAPI Endpoints
-
-POST /predict
-POST /batch_predict
-
-what streamlit needs to display from Response
-
-Risk Summary
-Field	Why
-churn_probability	Core ML signal
-risk_level	Human-readable classification
-
-Customer Segment (Business Context)
-Field
-segment_label
-
-Economic Impact (Decision Driver)
-Field
-expected_loss
-retention_cost
-customer_value
-
-Retention Decision (Actionable Output)
-Field
-decision
-retention_action
-
-Explanation (Trust Layer)
-
-Field
-explanation
-Top 3 risk drivers
-
----------------------------------------------
-
-currently what we decided
-
-data/raw/telco_customer_churn.csv
-data/processed/telco_customer_churn_canonical.csv
-data/features/telco_customer_churn_features.csv
-
-notebooks/
-01_eda 
-02_churn_pipeline.ipynb
-03_segmentation_pipeline.ipynb
-04_retention_decision.ipynb
-
-src/
-preprocessing.py
-feature_engineering.py
-churn_pipeline.py
-segmentation_pipeline.py
-retention_engine.py
+id (uuid)
+created_at
+batch_id (nullable)
+input_json
+churn_probability
+urgency
+persona
+model_version

@@ -1,6 +1,11 @@
 import streamlit as st
 import requests
 import os
+import shap
+import numpy as np
+import pandas as pd
+from io import BytesIO
+import matplotlib.pyplot as plt
 
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
 
@@ -38,7 +43,7 @@ with h2:
         disabled=True
     )
 
-tabs = st.tabs(["Single Customer"])
+tabs = st.tabs(["Single Customer", "Batch Prediction"])
 
 # ==================================================
 # SINGLE CUSTOMER
@@ -206,43 +211,163 @@ with tabs[0]:
 
     # ---------------- RIGHT COLUMN ----------------
 
-    p = st.session_state.prediction
-
     with right:
 
-        with st.container(border=True):
-            st.markdown("### 📈 Risk Summary")
-            st.text_input("Churn Risk", value=p.get("risk_level", ""), disabled=True)
-            st.number_input("Churn Probability", value=float(p.get("churn_probability", 0)), disabled=True)
+        pred = st.session_state.prediction
 
-        with st.container(border=True):
-            st.markdown("### 👤 Customer Segment")
-            st.text_area(
-                "Customer Segment",
-                value=p.get("segment", ""),
-                disabled=True,
-                label_visibility="collapsed"
-            )
+        if pred:
+            with st.container(border=True):
 
-        with st.container(border=True):
-            st.markdown("### 💰 Economic Impact")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.number_input("Expected Loss ($)", value=float(p.get("expected_loss", 0)), disabled=True)
-            with c2:
-                st.number_input("Retention Cost ($)", value=float(p.get("retention_cost", 0)), disabled=True)
+                st.subheader("📈 Churn Prediction Summary")
 
-        with st.container(border=True):
-            st.markdown("### 🎯 Retention Decision")
-            st.text_input("Final Decision", value=p.get("decision", ""), disabled=True)
-            st.text_area("Recommended Action", value=p.get("retention_action", ""), disabled=True)
+                # ---------- ROW 1 : Risk + Urgency ----------
+                r1, r2 = st.columns(2)
 
-        with st.container(border=True):
-            st.markdown("### 🧠 Why This Decision?")
-            st.text_area(
-                "Explanation",
-                value=p.get("explanation", ""),
-                height=100,
-                disabled=True,
-                label_visibility="collapsed"
-            )
+                with r1:
+                    st.metric(
+                        "🔥 Churn Risk",
+                        f"{pred['churn_probability']*100:.1f}%"
+                    )
+
+                with r2:
+                    urgency = pred["urgency"].upper()
+
+                    urgency_color = {
+                        "HIGH": "🔴 HIGH",
+                        "MEDIUM": "🟠 MEDIUM",
+                        "LOW": "🟡 LOW",
+                        "VERY_LOW": "🟢 VERY LOW"
+                    }.get(urgency, urgency)
+
+                    st.metric("⚡ Urgency", urgency_color)
+
+                # ---------- ROW 2 : Persona ----------
+                st.metric(
+                    "👤 Persona",
+                    pred["persona"]
+                )
+
+            with st.container(border=True):
+
+                st.subheader("🧠 Why this customer may churn")
+
+                for r in pred["top_reasons"]:
+                    if r["value"]:
+                        st.info(f"**{r['feature']} = {r['value']}**  \nImpact: {r['impact']:+.3f}")
+                    else:
+                        st.info(f"**{r['feature']}**  \nImpact: {r['impact']:+.3f}")
+            
+            with st.container(border=True):
+
+                st.subheader("🎯 Recommended Retention Actions")
+
+                for a in pred["recommended_actions"]:
+                    st.checkbox(a, value=True)
+
+            # ---------------- SHAP ----------------
+            with st.container(border=True):
+
+                with st.expander("📊 Explain Prediction (SHAP)", expanded=False):
+
+                    shap_values = np.array(pred["shap_values"])
+                    shap_base = pred["shap_base"]
+                    shap_data = np.array(pred["shap_data"])
+                    shap_features = pred["shap_features"]
+
+                    shap_exp = shap.Explanation(
+                        values=shap_values,
+                        base_values=shap_base,
+                        data=shap_data,
+                        feature_names=shap_features
+                    )
+
+                    fig = plt.figure()
+                    shap.plots.waterfall(shap_exp, show=False)
+                    st.pyplot(fig, clear_figure=True)
+
+        else:
+            with st.container(border=True):
+                st.info("Waiting for prediction…")
+
+# ==================================================
+# BATCH PREDICTION
+# ==================================================
+
+with tabs[1]:
+
+    st.subheader("📂 Batch Customer Prediction")
+
+    uploaded_file = st.file_uploader(
+        "Upload CSV file",
+        type=["csv"],
+        help="Upload customer CSV with same schema as single prediction"
+    )
+
+    if uploaded_file is not None:
+
+        try:
+            input_df = pd.read_csv(uploaded_file)
+
+            st.markdown("### 👀 Input CSV Preview")
+            st.dataframe(input_df.head(20), use_container_width=True)
+
+            if st.button("Run Batch Prediction", key="run_batch"):
+
+                with st.spinner("Running batch inference..."):
+
+                    files = {
+                        "file": (
+                            uploaded_file.name,
+                            uploaded_file.getvalue(),
+                            "text/csv"
+                        )
+                    }
+
+                    response = requests.post(
+                        f"{FASTAPI_URL}/predict_batch",
+                        files=files,
+                        timeout=60
+                    )
+
+                    response.raise_for_status()
+
+                    results = response.json()
+                    results_df = pd.DataFrame(results)
+
+                    st.session_state["batch_results"] = results_df
+                    st.session_state.status = "🟢 Batch prediction successful"
+
+        except Exception as e:
+            st.error(f"Batch failed: {e}")
+            st.session_state.status = "🔴 Batch error"
+
+    # ---------- Show Results ----------
+    if "batch_results" in st.session_state:
+
+        results_df = st.session_state["batch_results"]
+
+        st.markdown("### 📊 Prediction Results Preview")
+        st.caption(f"Rows scored: {len(results_df)}")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("High Urgency", (results_df["urgency"] == "high").sum())
+
+        with col2:
+            st.metric("Medium Urgency", (results_df["urgency"] == "medium").sum())
+
+        with col3:
+            st.metric("Low / Very Low", (results_df["urgency"].isin(["low","very_low"])).sum())
+        st.dataframe(results_df.head(50), use_container_width=True)
+
+        # Download button
+        csv_buffer = BytesIO()
+        results_df.to_csv(csv_buffer, index=False)
+
+        st.download_button(
+            label="⬇️ Download Results CSV",
+            data=csv_buffer.getvalue(),
+            file_name="churn_batch_results.csv",
+            mime="text/csv"
+        )
