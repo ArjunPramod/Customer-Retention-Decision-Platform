@@ -29,10 +29,10 @@ h1, h2 = st.columns([4, 1])
 
 with h1:
     st.markdown("""
-    <h1 style="margin-bottom:0;">📊 Telecom Customer Retention Decision Platform</h1>
-    <h4 style="margin-top:4px;color:#999;font-weight:400;">
-    Predict churn risk, segment customers, and generate cost-aware retention actions
-    </h4>
+    <h2 style="margin-bottom:0;">📊 Telecom Customer Retention Decision Platform</h2>
+    <h5 style="margin-top:4px;color:#999;font-weight:400;">
+    Predict churn. Understand customers. Build smarter retention.
+    </h5>
     """, unsafe_allow_html=True)
 
 with h2:
@@ -287,7 +287,8 @@ with tabs[0]:
 
         else:
             with st.container(border=True):
-                st.info("Waiting for prediction…")
+                st.markdown("### 📈 Prediction Results")
+                st.info("Fill in customer details on the left and click **Predict Customer** to see churn risk, insights, and retention actions.")
 
 # ==================================================
 # BATCH PREDICTION
@@ -346,19 +347,25 @@ with tabs[1]:
 
         results_df = st.session_state["batch_results"]
 
-        st.markdown("### 📊 Prediction Results Preview")
-        st.caption(f"Rows scored: {len(results_df)}")
+        with st.container(border=True):
 
-        col1, col2, col3 = st.columns(3)
+            st.markdown("### 📊 Prediction Results Preview")
+            st.caption(f"Rows scored: {len(results_df)}")
 
-        with col1:
-            st.metric("High Urgency", (results_df["urgency"] == "high").sum())
+            col1, col2, col3, col4 = st.columns(4)
 
-        with col2:
-            st.metric("Medium Urgency", (results_df["urgency"] == "medium").sum())
+            with col1:
+                st.metric("🔴 High", (results_df["urgency"] == "high").sum())
 
-        with col3:
-            st.metric("Low / Very Low", (results_df["urgency"].isin(["low","very_low"])).sum())
+            with col2:
+                st.metric("🟠 Medium", (results_df["urgency"] == "medium").sum())
+
+            with col3:
+                st.metric("🟡 Low", (results_df["urgency"] == "low").sum())
+
+            with col4:
+                st.metric("🟢 Very Low", (results_df["urgency"] == "very_low").sum())
+
         st.dataframe(results_df.head(50), use_container_width=True)
 
         # Download button
@@ -405,6 +412,18 @@ with tabs[2]:
     # Ensure datetime conversion
     history_df["created_at"] = pd.to_datetime(history_df["created_at"])
 
+    # ===============================
+    # Aggregations for simple visuals
+    # ===============================
+
+    persona_risk = (
+        history_df.groupby("persona")["churn_probability"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    urgency_counts = history_df["urgency"].value_counts()
+
     # ==================================================
     # SECTION 1 — KPIs
     # ==================================================
@@ -436,6 +455,42 @@ with tabs[2]:
 
         with k3:
             st.metric("Avg Churn Today", f"{avg_churn_today:.3f}")
+
+        # ==================================================
+        # SIMPLE VISUAL OVERVIEW
+        # ==================================================
+
+        FIG_H = 3.8
+
+        c1, c2, c3 = st.columns([1, 1, 1.3])
+
+        with c1:
+            st.markdown("#### 📊 Churn Distribution")
+
+            fig, ax = plt.subplots(figsize=(4.5, FIG_H))
+            ax.hist(history_df["churn_probability"], bins=20)
+            ax.set_xlabel("Churn Probability")
+            ax.set_ylabel("Customers")
+            st.pyplot(fig)
+
+        with c2:
+            st.markdown("#### ⚡ Urgency Breakdown")
+
+            fig, ax = plt.subplots(figsize=(4.5, FIG_H))
+            urgency_counts.plot(kind="bar", ax=ax)
+            ax.set_ylabel("Customers")
+            ax.set_xlabel("")
+            ax.tick_params(axis="x", rotation=0)
+            st.pyplot(fig)
+
+        with c3:
+            st.markdown("#### 👤 Persona Risk Profile")
+
+            fig, ax = plt.subplots(figsize=(5, FIG_H))
+            persona_risk.sort_values().plot(kind="barh", ax=ax)
+            ax.set_xlabel("Avg Churn Probability")
+            ax.set_xlim(0, 1)
+            st.pyplot(fig)
 
     # ==================================================
     # SECTION 2 — Filters
@@ -503,8 +558,7 @@ with tabs[2]:
                 "created_at",
                 "churn_probability",
                 "urgency",
-                "persona",
-                "cluster"
+                "persona"
             ]].sort_values("created_at", ascending=False),
             use_container_width=True
         )
