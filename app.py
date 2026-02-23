@@ -43,7 +43,7 @@ with h2:
         disabled=True
     )
 
-tabs = st.tabs(["Single Customer", "Batch Prediction"])
+tabs = st.tabs(["Single Customer", "Batch Prediction", "Prediction History"])
 
 # ==================================================
 # SINGLE CUSTOMER
@@ -370,4 +370,141 @@ with tabs[1]:
             data=csv_buffer.getvalue(),
             file_name="churn_batch_results.csv",
             mime="text/csv"
+        )
+
+# ==================================================
+# PREDICTION HISTORY
+# ==================================================
+
+with tabs[2]:
+
+    st.subheader("📜 Prediction History")
+
+    # --------------------------------------------
+    # Load data from FastAPI
+    # --------------------------------------------
+
+    try:
+        response = requests.get(f"{FASTAPI_URL}/history", timeout=10)
+        response.raise_for_status()
+
+        history_df = pd.DataFrame(response.json())
+
+        # Get total row count (separate lightweight call)
+        count_resp = requests.get(f"{FASTAPI_URL}/history_count", timeout=10)
+        total_rows = count_resp.json()["total"]
+
+    except Exception as e:
+        st.error(f"Failed to load history: {e}")
+        history_df = pd.DataFrame()
+
+    if history_df.empty:
+        st.info("No prediction history found.")
+        st.stop()
+
+    # Ensure datetime conversion
+    history_df["created_at"] = pd.to_datetime(history_df["created_at"])
+
+    # ==================================================
+    # SECTION 1 — KPIs
+    # ==================================================
+    with st.container(border=True):
+    
+        st.markdown("### 📊 Overview")
+
+        st.caption(
+            f"Showing latest {len(history_df)} of {total_rows} predictions"
+        )
+
+        total_predictions = len(history_df)
+        high_urgency_count = (history_df["urgency"] == "high").sum()
+
+        today = pd.Timestamp.utcnow().date()
+        today_df = history_df[history_df["created_at"].dt.date == today]
+        avg_churn_today = (
+            today_df["churn_probability"].mean()
+            if not today_df.empty else 0
+        )
+
+        k1, k2, k3 = st.columns(3)
+
+        with k1:
+            st.metric("Total Predictions", total_predictions)
+
+        with k2:
+            st.metric("High Urgency Count", high_urgency_count)
+
+        with k3:
+            st.metric("Avg Churn Today", f"{avg_churn_today:.3f}")
+
+    # ==================================================
+    # SECTION 2 — Filters
+    # ==================================================
+    with st.container(border=True):
+
+        st.markdown("### 🔎 Filters")
+
+        f1, f2, f3 = st.columns(3)
+
+        with f1:
+            urgency_filter = st.selectbox(
+                "Urgency",
+                ["All"] + sorted(history_df["urgency"].unique().tolist())
+            )
+
+        with f2:
+            persona_filter = st.selectbox(
+                "Persona",
+                ["All"] + sorted(history_df["persona"].unique().tolist())
+            )
+
+        with f3:
+            min_date = history_df["created_at"].min().date()
+            max_date = history_df["created_at"].max().date()
+
+            date_range = st.date_input(
+                "Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+
+        # Apply filters
+        filtered_df = history_df.copy()
+
+        if urgency_filter != "All":
+            filtered_df = filtered_df[
+                filtered_df["urgency"] == urgency_filter
+            ]
+
+        if persona_filter != "All":
+            filtered_df = filtered_df[
+                filtered_df["persona"] == persona_filter
+            ]
+
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_df = filtered_df[
+                (filtered_df["created_at"].dt.date >= start_date) &
+                (filtered_df["created_at"].dt.date <= end_date)
+            ]
+
+    # ==================================================
+    # SECTION 3 — Table
+    # ==================================================
+    with st.container(border=True):
+
+        st.markdown("### 📋 Recent Predictions")
+
+        st.caption(f"Filtered rows: {len(filtered_df)}")
+
+        st.dataframe(
+            filtered_df[[
+                "created_at",
+                "churn_probability",
+                "urgency",
+                "persona",
+                "cluster"
+            ]].sort_values("created_at", ascending=False),
+            use_container_width=True
         )
