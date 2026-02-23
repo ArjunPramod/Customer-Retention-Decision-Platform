@@ -1,1 +1,3 @@
-# End-to-End Telecom Churn Prediction & Cost-Aware Retention Decision System
+# Telecom Customer Retention Decision Platform
+
+End-to-End ML System
