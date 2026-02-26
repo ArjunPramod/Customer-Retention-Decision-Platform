@@ -115,10 +115,6 @@ for _ in range(N):
 
 df = pd.DataFrame(rows)
 
-# -----------------------
-# SAVE
-# -----------------------
-
 df.to_csv("data/sample/test_churn_batch_1000.csv", index=False)
 
 print("Saved data/sample/test_churn_batch_1000.csv")
