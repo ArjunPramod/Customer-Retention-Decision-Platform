@@ -115,6 +115,6 @@ for _ in range(N):
 
 df = pd.DataFrame(rows)
 
-df.to_csv("data/sample/test_churn_batch_1000.csv", index=False)
+df.to_csv("../data/sample/test_churn_batch_1000.csv", index=False)
 
-print("Saved data/sample/test_churn_batch_1000.csv")
+print("Saved ../data/sample/test_churn_batch_1000.csv")
