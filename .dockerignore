@@ -1,0 +1,25 @@
+# git
+.git
+.gitignore
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# notebooks
+notebooks/
+*.ipynb
+
+# data
+data/
+mlruns/
+mlflow.db
+
+# docs
+diagrams/
+
+# env
+.env
+venv/
+.venv/
